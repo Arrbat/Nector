@@ -13,7 +13,16 @@ int main(int argc, char *argv[])
         case 2:
             if (filePathIndex != -1)
             {
-                ParseStrings(argv[filePathIndex]);
+                if (isPE(argv[filePathIndex]) == 0)
+                {
+                    std::cout << "Starting static parsing of PE file... \n";
+                    PE_ParseStrings(argv[filePathIndex]);
+                }
+                else
+                {
+                    std::cout << "Not a valid PE file or another error occured while validating file. Terminated. \n";
+                    break;
+                }
             }
         default:
             break;

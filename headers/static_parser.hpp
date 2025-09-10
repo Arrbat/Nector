@@ -3,6 +3,7 @@
 
 #include <string>
 
-int ParseStrings(std::string pathToFile);
+int isPE(std::string pathToFile);
+int PE_ParseStrings(std::string pathToFile);
 
 #endif /* STATIC_PARSER_HPP */
