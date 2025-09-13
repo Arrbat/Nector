@@ -1,12 +1,13 @@
 #include <iostream>
 #include <fstream>
 #include <string>
+#include <regex>
 #include <unordered_map>
 #include <cctype>
 #include <windows.h>
 #include "static_parser.hpp" 
 
-int isPE(std::string pathToFile)
+int isPE (std::string pathToFile)
 {
     std::ifstream file(pathToFile, std::ios::binary);
     if (!file)
@@ -27,43 +28,67 @@ int isPE(std::string pathToFile)
     else return 1;
 }
 
-bool containsIC(const std::string& str, const std::string& pattern)
+bool containsIC (const std::string& str, const std::string& pattern)
 {
-    if(pattern.size() > str.size()) return false;
-    for(size_t i=0;i<=str.size()-pattern.size();i++)
+    if (pattern.size() > str.size()) return false;
+    for (size_t i=0;i<=str.size()-pattern.size();i++)
     {
         bool match = true;
-        for(size_t j=0;j<pattern.size();j++)
+        for (size_t j=0;j<pattern.size();j++)
         {
-            if(tolower(str[i+j]) != tolower(pattern[j])) { match=false; break; }
+            if (tolower(str[i+j]) != tolower(pattern[j])) { match=false; break; }
         }
-        if(match) return true;
+        if (match) return true;
     }
     return false;
 }
 
-const std::string domainTLDs[] = {".com", ".net", ".org", ".xyz", ".info", ".top", ".ru"};
-const std::string protocols[] = {"http://", "https://", "ftp://", "http", "https", "ftp"};
-const std::string winSockFuncs[] = {
-    "socket", "connect", "recv", "send", "WSAStartup", "WSACleanup", "bind", "listen", "accept"
-};
+inline bool isPrintableASCII (char c) { return (c >= 0x20 && c <= 0x7e); }
 
-inline bool isPrintable(char c) { return (c >= 0x20 && c <= 0x7e); }
-
-void extractStringsASCII(const char* buffer, size_t size, std::unordered_map<std::string,int>& counters, size_t minLen = 4)
+void extractStringsASCII (const char* buffer, size_t size, std::unordered_map<std::string,int>& counters, size_t minLen = 4)
 {
     size_t i = 0;
-    while(i < size)
+    while (i < size)
     {
         size_t start = i;
-        while(i < size && isPrintable(buffer[i])) i++;
-        if(i - start >= minLen)
+        while (i < size && isPrintableASCII(buffer[i])) i++;
+        if (i - start >= minLen)
         {
             std::string s(buffer+start, i-start);
             counters[s]++;
         }
-        i++;
+        i = start + 1;
     }
+}
+
+bool FilterIoC(const std::string& s, bool requireTLD, bool checkBlacklist) {
+    const std::string domainTLDs[] = {
+        ".com", ".net", ".org", ".xyz", ".info", ".top", ".ru", ".cn", ".cc", ".pw", ".biz", ".us", ".uk", ".io", ".me", ".co", ".su", ".in", ".de", ".fr", ".eu", ".pl", ".tk", ".ga", ".cf", ".ml", ".gq", ".to", ".tv", ".site", ".online", ".store", ".space", ".website", ".club", ".pro", ".vip", ".work", ".app", ".mobi", ".name", ".live", ".win", ".men", ".bid", ".stream", ".click", ".link", ".email", ".download", ".trade", ".party", ".science", ".loan", ".date", ".faith", ".review", ".host", ".press", ".fun", ".cam", ".shop", ".monster", ".gov", ".mil", ".edu", ".int", ".arpa", ".asia", ".cat", ".jobs", ".museum", ".post", ".tel", ".travel", ".aero", ".coop", ".bank", ".insurance", ".law", ".med", ".music", ".news", ".tech", ".dev", ".cloud", ".blog", ".design", ".eco", ".health", ".kids", ".love", ".page", ".video", ".zone"
+    };
+    const std::string blacklist[] = {
+        ".cpp", ".startup", ".part.0", ".dll", ".exe", ".obj", ".lib", ".h", ".hpp", ".c", ".bss", ".data", ".text", ".rdata", ".idb", ".pdb", ".bak", ".tmp", ".log", ".manifest", ".cmd", ".bat", ".sh", ".ps1", ".json", ".xml", ".yaml", ".yml", ".ini", ".config", ".cache", ".lock", ".md", ".rst", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".zip", ".tar", ".gz", ".7z", ".rar", ".iso", ".img", ".vhd", ".vmdk"
+    };
+    bool isValidTLD = false;
+    bool isBlacklisted = false;
+    if (requireTLD) {
+        for (const auto& tld : domainTLDs) {
+            if (s.size() > tld.size() && s.substr(s.size() - tld.size()) == tld) {
+                isValidTLD = true;
+                break;
+            }
+        }
+    } else {
+        isValidTLD = true;
+    }
+    if (checkBlacklist) {
+        for (const auto& ext : blacklist) {
+            if (s.size() > ext.size() && s.substr(s.size() - ext.size()) == ext) {
+                isBlacklisted = true;
+                break;
+            }
+        }
+    }
+    return isValidTLD && !isBlacklisted;
 }
 
 void printIoC(const std::unordered_map<std::string,int>& counters)
@@ -71,41 +96,105 @@ void printIoC(const std::unordered_map<std::string,int>& counters)
     std::unordered_map<std::string,int> domainCounter;
     std::unordered_map<std::string,int> protocolCounter;
     std::unordered_map<std::string,int> winSockCounter;
+    std::unordered_map<std::string,int> ipv4Counter;
+    std::unordered_map<std::string,int> emailCounter;
 
-    for(const auto& p : counters)
+    // Helper to keep only full (not substring) IoCs
+    auto filter_full_iocs = [](const std::unordered_map<std::string,int>& input) {
+        std::vector<std::string> keys;
+        for (const auto& p : input) keys.push_back(p.first);
+        std::vector<bool> is_sub(keys.size(), false);
+        for (size_t i = 0; i < keys.size(); ++i) {
+            for (size_t j = 0; j < keys.size(); ++j) {
+                if (i != j && keys[j].find(keys[i]) != std::string::npos) {
+                    if (keys[j].size() > keys[i].size()) {
+                        is_sub[i] = true;
+                        break;
+                    }
+                }
+            }
+        }
+        std::unordered_map<std::string,int> result;
+        for (size_t i = 0; i < keys.size(); ++i) {
+            if (!is_sub[i]) result[keys[i]] = input.at(keys[i]);
+        }
+        return result;
+    };
+
+    const std::regex domainRegex(R"(\b([a-zA-Z0-9-]{2,63}\.)+[a-zA-Z]{2,24}\b)");
+    const std::regex urlRegex(R"(\b((https?|ftp|sftp|ftps|ws|wss|smtp|imap|pop3|ldap|smb|rdp|dns|irc|tcp|udp)://[a-zA-Z0-9\-._~%]+(\.[a-zA-Z]{2,24})+(:\d+)?(/[^\s]*)?)\b)");
+    const std::regex apiRegex(R"(\b(socket|connect|recv|send|WSAStartup|WSACleanup|bind|listen|accept|closesocket|gethostbyname
+                                |gethostbyaddr|getaddrinfo|getnameinfo|inet_addr|inet_ntoa|inet_pton|inet_ntop|shutdown|setsockopt
+                                |getsockopt|select|ioctlsocket|WSAGetLastError|WSASetLastError|WSARecv|WSASend|WSAConnect|WSAAccept
+                                |WSAAsyncSelect|WSAEventSelect|InternetOpen|InternetConnect|InternetOpenUrl|InternetReadFile
+                                |InternetWriteFile|HttpOpenRequest|HttpSendRequest|HttpQueryInfo|WinHttpOpen|WinHttpConnect
+                                |WinHttpOpenRequest|WinHttpSendRequest|WinHttpReceiveResponse|WinHttpReadData|WinHttpWriteData
+                                |URLDownloadToFile|OpenSCManager|CreateService|OpenService|StartService|ControlService|DeleteService
+                                |CloseServiceHandle|NetUserAdd|NetUserDel|NetUserEnum|NetLocalGroupAddMembers|NetLocalGroupDelMembers
+                                |NetShareAdd|NetShareDel|NetSessionEnum|NetWkstaUserEnum)\b)");
+    const std::regex ipv4Regex(R"(\b((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b)");
+    const std::regex emailRegex(R"(\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,24}\b)");
+
+    for (const auto& p : counters)
     {
         const std::string& s = p.first;
         int count = p.second;
 
-        // domain
-        for(const auto& tld : domainTLDs)
-            if(containsIC(s,tld)) domainCounter[s]+=count;
-
-        // protocol
-        for(const auto& proto : protocols)
-            if(containsIC(s,proto)) protocolCounter[s]+=count;
-
-        // Net funcs
+        if (s.length() >= 6 && std::regex_search(s, domainRegex) && FilterIoC(s, true, true))
+            domainCounter[s] += count;
+        if (s.length() >= 6 && std::regex_search(s, urlRegex) && FilterIoC(s, true, true))
+            protocolCounter[s] += count;
+        if (s.length() >= 7 && std::regex_search(s, ipv4Regex) && FilterIoC(s, false, true))
+            ipv4Counter[s] += count;
+        if (s.length() >= 6 && std::regex_search(s, emailRegex) && FilterIoC(s, true, true))
+            emailCounter[s] += count;
         for(const auto& fn : winSockFuncs)
-            if(containsIC(s,fn)) winSockCounter[s]+=count;
+            if(containsIC(s,fn) && s.length() == fn.length()) winSockCounter[s] += count;
     }
 
-    std::cout << "\n=== IoC Report ===\n";
-    std::cout << "Domains found:\n";
-    for(const auto& p : domainCounter)
-        std::cout << p.first << " : " << p.second << "\n";
+    std::cout << "\n======  IoC Report  ======\n";
 
-    std::cout << "\nProtocols found:\n";
-    for(const auto& p : protocolCounter)
-        std::cout << p.first << " : " << p.second << "\n";
+    auto filteredDomains = filter_full_iocs(domainCounter);
+    auto filteredProtocols = filter_full_iocs(protocolCounter);
+    auto filteredEmails = filter_full_iocs(emailCounter);
 
-    std::cout << "\nWindows network API functions/strings found:\n";
-    for(const auto& p : winSockCounter)
-        std::cout << p.first << " : " << p.second << "\n";
+    if (filteredDomains.size() > 0)
+    {
+        std::cout << "\nDomains found:\n";
+        for (const auto& p : filteredDomains)
+            std::cout << p.first << " : " << p.second << "\n";
+    }
+
+    if (filteredProtocols.size() > 0)
+    {
+        std::cout << "\nProtocols/URLs found:\n";
+        for (const auto& p : filteredProtocols)
+            std::cout << p.first << " : " << p.second << "\n";
+    }
+
+    if (ipv4Counter.size() > 0)
+    {
+        std::cout << "\nIPv4 addresses found:\n";
+        for (const auto& p : ipv4Counter)
+            std::cout << p.first << " : " << p.second << "\n";
+    }
+
+    if (filteredEmails.size() > 0)
+    {
+        std::cout << "\nEmail addresses found:\n";
+        for (const auto& p : filteredEmails)
+            std::cout << p.first << " : " << p.second << "\n";
+    }
+
+    if (winSockCounter.size() > 0)
+    {
+        std::cout << "\nWindows network API functions/strings found:\n";
+        for (const auto& p : winSockCounter)
+            std::cout << p.first << " : " << p.second << "\n";
+    }
 }
 
-
-int PE_ParseStrings(std::string pathToFile)
+int PE_ParseStrings(std::string pathToFile, std::string pathToLogFile)
 {
     std::cout << "Using path:\t" << pathToFile << "\n";
 
@@ -130,6 +219,36 @@ int PE_ParseStrings(std::string pathToFile)
     std::unordered_map<std::string,int> stringCounters;
     extractStringsASCII(buffer, fileSize, stringCounters, 4);
     printIoC(stringCounters);
+
+    if (pathToLogFile.empty())
+    {
+        /* pass */
+    }
+    else
+    {
+        if (pathToLogFile.size() >= 4 && pathToLogFile.compare(pathToLogFile.size() - 4, 4, ".txt") == 0)
+        {
+            std::ofstream logFile(pathToLogFile.c_str());
+            if (logFile.is_open())
+            {
+                std::streambuf* oldCoutBuf = std::cout.rdbuf();
+                std::cout.rdbuf(logFile.rdbuf());
+                printIoC(stringCounters);
+                std::cout.rdbuf(oldCoutBuf);
+                logFile.close();
+
+            }
+            else
+            {
+                std::cout << "Error while opening log file for writing.";
+            }
+        }
+        else
+        {
+            std::cout << "Error: log file must end with .txt";
+        }
+    }
+
 
     delete[] buffer;
     return 0;

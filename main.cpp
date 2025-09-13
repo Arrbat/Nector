@@ -5,7 +5,9 @@
 int main(int argc, char *argv[]) 
 {
     int filePathIndex = -1;
-    switch (ParseCommands(argc, argv, filePathIndex)) 
+    int logPathIndex = -1;
+
+    switch (ParseCommands(argc, argv, filePathIndex, logPathIndex)) 
     {
         case 1:
             PrintHelpMessage();
@@ -16,7 +18,10 @@ int main(int argc, char *argv[])
                 if (isPE(argv[filePathIndex]) == 0)
                 {
                     std::cout << "Starting static parsing of PE file... \n";
-                    PE_ParseStrings(argv[filePathIndex]);
+                    if (logPathIndex == -1) 
+                        PE_ParseStrings(argv[filePathIndex], "");
+                    else 
+                        PE_ParseStrings(argv[filePathIndex], argv[logPathIndex]);
                 }
                 else
                 {
