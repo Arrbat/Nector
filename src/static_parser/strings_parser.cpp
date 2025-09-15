@@ -28,6 +28,41 @@ int isPE (std::string pathToFile)
     else return 1;
 }
 
+bool isOnlyDigitsAndDots(const std::string& s) 
+{
+    for (char c : s) {
+        if (!(isdigit(c) || c == '.')) return false;
+    }
+    return true;
+}
+
+bool isValidDomain(const std::string& s) 
+{
+    if (s.empty() || s.front() == '.' || s.back() == '.') return false;
+    size_t dotCount = 0;
+    for (char c : s) if (c == '.') ++dotCount;
+    return dotCount >= 1;
+}
+
+bool isValidEmail(const std::string& s) 
+{
+    size_t at = s.find('@');
+    if (at == std::string::npos || at == 0 || at == s.size()-1) return false;
+    return isValidDomain(s.substr(at+1));
+}
+
+bool isValidURL(const std::string& s) 
+{
+    size_t proto = s.find("://");
+    if (proto == std::string::npos) return false;
+    size_t start = proto + 3;
+    size_t end = s.find('/', start);
+    std::string host = (end == std::string::npos) ? s.substr(start) : s.substr(start, end-start);
+    return isValidDomain(host);
+}
+
+inline bool isPrintableASCII (char c) { return (c >= 0x20 && c <= 0x7e); }
+
 bool containsIC (const std::string& str, const std::string& pattern)
 {
     if (pattern.size() > str.size()) return false;
@@ -43,8 +78,6 @@ bool containsIC (const std::string& str, const std::string& pattern)
     return false;
 }
 
-inline bool isPrintableASCII (char c) { return (c >= 0x20 && c <= 0x7e); }
-
 void extractStringsASCII (const char* buffer, size_t size, std::unordered_map<std::string,int>& counters, size_t minLen = 4)
 {
     size_t i = 0;
@@ -58,6 +91,29 @@ void extractStringsASCII (const char* buffer, size_t size, std::unordered_map<st
             counters[s]++;
         }
         i = start + 1;
+    }
+}
+
+void extractStringsUTF16LE(const char* buffer, size_t size, std::unordered_map<std::string, std::pair<int, size_t>>& counters, size_t minLen = 4)
+{
+    size_t i = 0;
+    while (i + 1 < size)
+    {
+        size_t start = i;
+        std::string s;
+        while (i + 1 < size && isPrintableASCII(buffer[i]) && buffer[i+1] == 0)
+        {
+            s += buffer[i];
+            i += 2;
+        }
+        if (s.length() >= minLen)
+        {
+            if (counters.find(s) == counters.end() || counters[s].second > start)
+                counters[s] = {1, start};
+            else
+                counters[s].first++;
+        }
+        i = (s.length() > 0) ? i : i + 2;
     }
 }
 
@@ -121,8 +177,10 @@ void printIoC(const std::unordered_map<std::string,int>& counters)
         return result;
     };
 
-    const std::regex domainRegex(R"(\b([a-zA-Z0-9-]{2,63}\.)+[a-zA-Z]{2,24}\b)");
-    const std::regex urlRegex(R"(\b((https?|ftp|sftp|ftps|ws|wss|smtp|imap|pop3|ldap|smb|rdp|dns|irc|tcp|udp)://[a-zA-Z0-9\-._~%]+(\.[a-zA-Z]{2,24})+(:\d+)?(/[^\s]*)?)\b)");
+    const std::regex domainRegex(R"((?:[a-zA-Z0-9-]{1,63}\.)+[a-zA-Z]{2,24})");
+    const std::regex urlRegex(R"((https?|ftp|sftp|ftps|ws|wss|smtp|imap|pop3|ldap|smb|rdp|dns|irc|tcp|udp)://[a-zA-Z0-9\-._~%]+(\.[a-zA-Z]{2,24})+(:\d+)?(/[a-zA-Z0-9\-._~%!$&'()*+,;=:@/?]*)?)");
+    const std::regex ipv4Regex(R"((?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(?:\.(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3})");
+    const std::regex emailRegex(R"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,24})");
     const std::regex apiRegex(R"(\b(socket|connect|recv|send|WSAStartup|WSACleanup|bind|listen|accept|closesocket|gethostbyname
                                 |gethostbyaddr|getaddrinfo|getnameinfo|inet_addr|inet_ntoa|inet_pton|inet_ntop|shutdown|setsockopt
                                 |getsockopt|select|ioctlsocket|WSAGetLastError|WSASetLastError|WSARecv|WSASend|WSAConnect|WSAAccept
@@ -132,21 +190,24 @@ void printIoC(const std::unordered_map<std::string,int>& counters)
                                 |URLDownloadToFile|OpenSCManager|CreateService|OpenService|StartService|ControlService|DeleteService
                                 |CloseServiceHandle|NetUserAdd|NetUserDel|NetUserEnum|NetLocalGroupAddMembers|NetLocalGroupDelMembers
                                 |NetShareAdd|NetShareDel|NetSessionEnum|NetWkstaUserEnum)\b)");
-    const std::regex ipv4Regex(R"(\b((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b)");
-    const std::regex emailRegex(R"(\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,24}\b)");
 
     for (const auto& p : counters)
     {
         const std::string& s = p.first;
         int count = p.second;
 
-        if (s.length() >= 6 && std::regex_search(s, domainRegex) && FilterIoC(s, true, true))
+        if (s.length() >= 6 && std::regex_search(s, domainRegex) && FilterIoC(s, true, true) && isValidDomain(s))
             domainCounter[s] += count;
-        if (s.length() >= 6 && std::regex_search(s, urlRegex) && FilterIoC(s, true, true))
+        if (s.length() >= 6 && std::regex_search(s, urlRegex) && FilterIoC(s, true, true) && isValidURL(s))
             protocolCounter[s] += count;
-        if (s.length() >= 7 && std::regex_search(s, ipv4Regex) && FilterIoC(s, false, true))
+        if (s.length() >= 7 && std::regex_match(s, ipv4Regex) && FilterIoC(s, false, true) && isOnlyDigitsAndDots(s))
+        {
+            //common ip or version numbers (skip)
+            if (s == "1.0.0.0" || s == "14.0.0.0" || s == "4.0.0.0" || s == "255.255.255.255") 
+                continue;
             ipv4Counter[s] += count;
-        if (s.length() >= 6 && std::regex_search(s, emailRegex) && FilterIoC(s, true, true))
+        }
+        if (s.length() >= 6 && std::regex_search(s, emailRegex) && FilterIoC(s, true, true) && isValidEmail(s))
             emailCounter[s] += count;
         for(const auto& fn : winSockFuncs)
             if(containsIC(s,fn) && s.length() == fn.length()) winSockCounter[s] += count;
@@ -216,9 +277,15 @@ int PE_ParseStrings(std::string pathToFile, std::string pathToLogFile)
     }
 
     // Map of all strings that were found
-    std::unordered_map<std::string,int> stringCounters;
-    extractStringsASCII(buffer, fileSize, stringCounters, 4);
-    printIoC(stringCounters);
+    std::unordered_map<std::string, std::pair<int, size_t>> stringCounters;
+    extractStringsASCII(buffer, fileSize, reinterpret_cast<std::unordered_map<std::string,int>&>(stringCounters), 4);
+    extractStringsUTF16LE(buffer, fileSize, stringCounters, 4);
+
+    std::unordered_map<std::string, int> simpleCounters;
+    for (const auto& kv : stringCounters) {
+        simpleCounters[kv.first] = kv.second.first;
+    }
+    printIoC(simpleCounters);
 
     if (pathToLogFile.empty())
     {
@@ -233,7 +300,12 @@ int PE_ParseStrings(std::string pathToFile, std::string pathToLogFile)
             {
                 std::streambuf* oldCoutBuf = std::cout.rdbuf();
                 std::cout.rdbuf(logFile.rdbuf());
-                printIoC(stringCounters);
+                // Convert stringCounters to a map<string, int> for printIoC
+                std::unordered_map<std::string, int> simpleCounters;
+                for (const auto& kv : stringCounters) {
+                    simpleCounters[kv.first] = kv.second.first;
+                }
+                printIoC(simpleCounters);
                 std::cout.rdbuf(oldCoutBuf);
                 logFile.close();
 
