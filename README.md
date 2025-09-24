@@ -1,5 +1,5 @@
 # TL;DR
-Nector (Network inspector) is a tool for both static and dynamic analysis of real and possible network behaviour designed for malware analysis. 
+Nector (Network inspector) is a tool for static analysis of real and possible network behaviour designed for malware analysis. 
 
 Nector extracts Indicators of Compromise of provided sample. In terms of numbers, every new version of tool is tested on some malware samples (<=10) locally, including RATs, stealers, worms, bots and other malware classes. Families include xworm, amadey, remcos, lummastealer, infostealer etc.
 

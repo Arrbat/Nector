@@ -7,7 +7,7 @@
 #include <windows.h>
 #include "static_parser.hpp" 
 
-int isPE (std::string pathToFile)
+int isPE(std::string pathToFile)
 {
     std::ifstream file(pathToFile, std::ios::binary);
     if (!file)
@@ -61,9 +61,12 @@ bool isValidURL(const std::string& s)
     return isValidDomain(host);
 }
 
-inline bool isPrintableASCII (char c) { return (c >= 0x20 && c <= 0x7e); }
+inline bool isPrintableASCII(char c) 
+{ 
+    return (c >= 0x20 && c <= 0x7e); 
+}
 
-bool containsIC (const std::string& str, const std::string& pattern)
+bool containsIC(const std::string& str, const std::string& pattern)
 {
     if (pattern.size() > str.size()) return false;
     for (size_t i=0;i<=str.size()-pattern.size();i++)
@@ -78,7 +81,7 @@ bool containsIC (const std::string& str, const std::string& pattern)
     return false;
 }
 
-void extractStringsASCII (const char* buffer, size_t size, std::unordered_map<std::string,int>& counters, size_t minLen = 4)
+void extractStringsASCII(const char* buffer, size_t size, std::unordered_map<std::string,int>& counters, size_t minLen = 4)
 {
     size_t i = 0;
     while (i < size)

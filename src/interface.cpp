@@ -38,7 +38,7 @@ int ParseCommands(int argumentsNumber, char* commands[], int& filePathIndex, int
     }
     else
     {
-        std::cout << "No arguments provided or arguments are wrong. \n";
+        std::cout << "No arguments provided. Use --help command to see details. \n";
     }
     return 0;
 }
